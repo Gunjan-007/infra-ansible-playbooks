@@ -1,0 +1,11 @@
+---
+- name: Configure application server
+  hosts: app
+  become: yes
+  vars:
+    app_port: 3000
+    node_version: "20"
+    project_name: "{{ project_name | default('sysmon') }}"
+
+  roles:
+    - app
