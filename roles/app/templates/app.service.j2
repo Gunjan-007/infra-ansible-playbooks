@@ -1,0 +1,24 @@
+[Unit]
+Description=SysMon - System Monitor REST API
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/opt/sysmon
+ExecStart=/usr/local/bin/node /opt/sysmon/app.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/app.log
+StandardError=append:/var/log/app.log
+Environment=PORT={{ app_port }}
+Environment=NODE_ENV=production
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log /opt/sysmon
+
+[Install]
+WantedBy=multi-user.target
