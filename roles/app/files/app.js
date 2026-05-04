@@ -1,79 +1,133 @@
+
 'use strict';
 
 const express = require('express');
-const si = require('systeminformation');
-const os = require('os');
+const si      = require('systeminformation');
+const os      = require('os');
+const fs      = require('fs');
 
-const app = express();
+const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// Helper: format bytes
-const formatBytes = (bytes) => {
-  if (bytes === 0) return '0 B';
+// ── Helpers ────────────────────────────────────────────────────────────
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
-};
+}
+
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${d}d ${h}h ${m}m ${s}s`;
+}
+
+function log(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  process.stdout.write(line);
+  try { fs.appendFileSync('/var/log/app.log', line); } catch (_) {}
+}
 
 // ── Routes ─────────────────────────────────────────────────────────────
 
-// Health check — ALB pings this
+// Health check — ALB hits this every 30 seconds
 app.get('/health', (req, res) => {
   res.status(200).json({
-    status: 'ok',
+    status:    'ok',
     timestamp: new Date().toISOString(),
-    hostname: os.hostname()
+    hostname:  os.hostname(),
+    uptime:    formatUptime(os.uptime())
   });
 });
 
-// System overview
-app.get('/api/system', async (req, res) => {
+// Dashboard — quick summary of all key metrics in one call
+app.get('/api/dashboard', async (req, res) => {
   try {
-    const [cpu, mem, osInfo, time] = await Promise.all([
-      si.cpu(),
+    const [load, mem, disks, nets] = await Promise.all([
+      si.currentLoad(),
       si.mem(),
-      si.osInfo(),
-      si.time()
+      si.fsSize(),
+      si.networkStats()
     ]);
 
     res.json({
-      hostname: os.hostname(),
-      uptime_seconds: os.uptime(),
-      uptime_human: formatUptime(os.uptime()),
-      os: {
-        platform: osInfo.platform,
-        distro: osInfo.distro,
-        release: osInfo.release,
-        arch: osInfo.arch,
-        kernel: osInfo.kernel
-      },
+      hostname:   os.hostname(),
+      timestamp:  new Date().toISOString(),
+      uptime:     formatUptime(os.uptime()),
       cpu: {
-        manufacturer: cpu.manufacturer,
-        brand: cpu.brand,
-        cores_physical: cpu.physicalCores,
-        cores_logical: cpu.cores,
-        speed_ghz: cpu.speed,
-        load_percent: (await si.currentLoad()).currentLoad.toFixed(2)
+        load_percent: parseFloat(load.currentLoad.toFixed(2))
       },
       memory: {
-        total: formatBytes(mem.total),
-        used: formatBytes(mem.used),
-        free: formatBytes(mem.free),
-        used_percent: ((mem.used / mem.total) * 100).toFixed(2)
+        total:        formatBytes(mem.total),
+        used:         formatBytes(mem.used),
+        free:         formatBytes(mem.free),
+        used_percent: parseFloat(((mem.used / mem.total) * 100).toFixed(2))
       },
-      time: {
-        current: time.current,
-        timezone: time.timezone,
-        timezoneName: time.timezoneName
-      }
+      disk: disks[0] ? {
+        mount:        disks[0].mount,
+        total:        formatBytes(disks[0].size),
+        used:         formatBytes(disks[0].used),
+        free:         formatBytes(disks[0].available),
+        used_percent: parseFloat(disks[0].use.toFixed(2))
+      } : null,
+      network: nets[0] ? {
+        interface: nets[0].iface,
+        rx_sec:    formatBytes(nets[0].rx_sec) + '/s',
+        tx_sec:    formatBytes(nets[0].tx_sec) + '/s'
+      } : null
     });
   } catch (err) {
+    log(`ERROR /api/dashboard: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// CPU details
+// System overview — OS info, CPU specs, memory summary
+app.get('/api/system', async (req, res) => {
+  try {
+    const [cpu, mem, osInfo] = await Promise.all([
+      si.cpu(),
+      si.mem(),
+      si.osInfo()
+    ]);
+    const load = await si.currentLoad();
+
+    res.json({
+      hostname: os.hostname(),
+      uptime:   formatUptime(os.uptime()),
+      os: {
+        platform: osInfo.platform,
+        distro:   osInfo.distro,
+        release:  osInfo.release,
+        arch:     osInfo.arch,
+        kernel:   osInfo.kernel
+      },
+      cpu: {
+        manufacturer:   cpu.manufacturer,
+        brand:          cpu.brand,
+        speed_ghz:      cpu.speed,
+        cores_physical: cpu.physicalCores,
+        cores_logical:  cpu.cores,
+        load_percent:   parseFloat(load.currentLoad.toFixed(2))
+      },
+      memory: {
+        total:        formatBytes(mem.total),
+        used:         formatBytes(mem.used),
+        free:         formatBytes(mem.free),
+        used_percent: parseFloat(((mem.used / mem.total) * 100).toFixed(2))
+      }
+    });
+  } catch (err) {
+    log(`ERROR /api/system: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CPU — per-core load breakdown
 app.get('/api/cpu', async (req, res) => {
   try {
     const [load, temp] = await Promise.all([
@@ -82,68 +136,71 @@ app.get('/api/cpu', async (req, res) => {
     ]);
 
     res.json({
-      hostname: os.hostname(),
-      load_percent: load.currentLoad.toFixed(2),
-      load_per_core: load.cpus.map((c, i) => ({
-        core: i,
-        load_percent: c.load.toFixed(2)
+      hostname:          os.hostname(),
+      load_percent:      parseFloat(load.currentLoad.toFixed(2)),
+      load_user:         parseFloat(load.currentLoadUser.toFixed(2)),
+      load_system:       parseFloat(load.currentLoadSystem.toFixed(2)),
+      per_core:          load.cpus.map((c, i) => ({
+        core:         i,
+        load_percent: parseFloat(c.load.toFixed(2))
       })),
-      temperature_celsius: temp.main || 'N/A'
+      temperature_c: temp.main || 'unavailable'
     });
   } catch (err) {
+    log(`ERROR /api/cpu: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Memory details
+// Memory — RAM and swap breakdown
 app.get('/api/memory', async (req, res) => {
   try {
     const mem = await si.mem();
     res.json({
-      hostname: os.hostname(),
-      total: formatBytes(mem.total),
-      used: formatBytes(mem.used),
-      free: formatBytes(mem.free),
-      active: formatBytes(mem.active),
-      available: formatBytes(mem.available),
-      swap_total: formatBytes(mem.swaptotal),
-      swap_used: formatBytes(mem.swapused),
-      used_percent: ((mem.used / mem.total) * 100).toFixed(2)
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Disk details
-app.get('/api/disk', async (req, res) => {
-  try {
-    const [disks, io] = await Promise.all([
-      si.fsSize(),
-      si.disksIO()
-    ]);
-
-    res.json({
-      hostname: os.hostname(),
-      filesystems: disks.map(d => ({
-        mount: d.mount,
-        type: d.type,
-        size: formatBytes(d.size),
-        used: formatBytes(d.used),
-        available: formatBytes(d.available),
-        used_percent: d.use.toFixed(2)
-      })),
-      io: {
-        read_bytes: formatBytes(io.rIO_sec || 0) + '/s',
-        write_bytes: formatBytes(io.wIO_sec || 0) + '/s'
+      hostname:     os.hostname(),
+      total:        formatBytes(mem.total),
+      used:         formatBytes(mem.used),
+      free:         formatBytes(mem.free),
+      active:       formatBytes(mem.active),
+      available:    formatBytes(mem.available),
+      used_percent: parseFloat(((mem.used / mem.total) * 100).toFixed(2)),
+      swap: {
+        total:        formatBytes(mem.swaptotal),
+        used:         formatBytes(mem.swapused),
+        free:         formatBytes(mem.swapfree),
+        used_percent: mem.swaptotal > 0
+          ? parseFloat(((mem.swapused / mem.swaptotal) * 100).toFixed(2))
+          : 0
       }
     });
   } catch (err) {
+    log(`ERROR /api/memory: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Network interfaces
+// Disk — all mounted filesystems
+app.get('/api/disk', async (req, res) => {
+  try {
+    const disks = await si.fsSize();
+    res.json({
+      hostname:    os.hostname(),
+      filesystems: disks.map(d => ({
+        mount:        d.mount,
+        type:         d.type,
+        total:        formatBytes(d.size),
+        used:         formatBytes(d.used),
+        free:         formatBytes(d.available),
+        used_percent: parseFloat(d.use.toFixed(2))
+      }))
+    });
+  } catch (err) {
+    log(`ERROR /api/disk: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Network — interfaces and live throughput
 app.get('/api/network', async (req, res) => {
   try {
     const [ifaces, stats] = await Promise.all([
@@ -152,29 +209,32 @@ app.get('/api/network', async (req, res) => {
     ]);
 
     res.json({
-      hostname: os.hostname(),
-      interfaces: ifaces.map(i => ({
-        name: i.iface,
-        ip4: i.ip4,
-        ip6: i.ip6,
-        mac: i.mac,
-        speed_mbps: i.speed,
-        type: i.type
-      })),
-      stats: stats.map(s => ({
-        interface: s.iface,
-        rx_bytes: formatBytes(s.rx_bytes),
-        tx_bytes: formatBytes(s.tx_bytes),
-        rx_sec: formatBytes(s.rx_sec) + '/s',
-        tx_sec: formatBytes(s.tx_sec) + '/s'
-      }))
+      hostname:   os.hostname(),
+      interfaces: ifaces
+        .filter(i => !i.internal)
+        .map(i => ({
+          name:      i.iface,
+          ip4:       i.ip4,
+          mac:       i.mac,
+          speed_mbps: i.speed
+        })),
+      throughput: stats
+        .filter(s => !s.iface.startsWith('lo'))
+        .map(s => ({
+          interface: s.iface,
+          rx_total:  formatBytes(s.rx_bytes),
+          tx_total:  formatBytes(s.tx_bytes),
+          rx_sec:    formatBytes(s.rx_sec) + '/s',
+          tx_sec:    formatBytes(s.tx_sec) + '/s'
+        }))
     });
   } catch (err) {
+    log(`ERROR /api/network: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Process list (top 10 by CPU)
+// Processes — top 10 by CPU usage
 app.get('/api/processes', async (req, res) => {
   try {
     const procs = await si.processes();
@@ -182,78 +242,44 @@ app.get('/api/processes', async (req, res) => {
       .sort((a, b) => b.cpu - a.cpu)
       .slice(0, 10)
       .map(p => ({
-        pid: p.pid,
-        name: p.name,
-        cpu_percent: p.cpu.toFixed(2),
-        mem_percent: p.mem.toFixed(2),
-        state: p.state,
-        started: p.started
+        pid:         p.pid,
+        name:        p.name,
+        cpu_percent: parseFloat(p.cpu.toFixed(2)),
+        mem_percent: parseFloat(p.mem.toFixed(2)),
+        state:       p.state
       }));
 
     res.json({
-      hostname: os.hostname(),
-      total_processes: procs.all,
-      running: procs.running,
-      sleeping: procs.sleeping,
-      top10_by_cpu: top10
+      hostname:         os.hostname(),
+      total:            procs.all,
+      running:          procs.running,
+      sleeping:         procs.sleeping,
+      top10_by_cpu:     top10
     });
   } catch (err) {
+    log(`ERROR /api/processes: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Dashboard — all in one
-app.get('/api/dashboard', async (req, res) => {
-  try {
-    const [load, mem, disk, net] = await Promise.all([
-      si.currentLoad(),
-      si.mem(),
-      si.fsSize(),
-      si.networkStats()
-    ]);
-
-    res.json({
-      hostname: os.hostname(),
-      timestamp: new Date().toISOString(),
-      uptime: formatUptime(os.uptime()),
-      cpu_load: load.currentLoad.toFixed(2) + '%',
-      memory: {
-        used_percent: ((mem.used / mem.total) * 100).toFixed(2) + '%',
-        free: formatBytes(mem.free)
-      },
-      disk: disk[0] ? {
-        used_percent: disk[0].use.toFixed(2) + '%',
-        free: formatBytes(disk[0].available)
-      } : null,
-      network: net[0] ? {
-        rx: formatBytes(net[0].rx_sec) + '/s',
-        tx: formatBytes(net[0].tx_sec) + '/s'
-      } : null
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 404
+// 404 handler — tells caller which endpoints are valid
 app.use((req, res) => {
   res.status(404).json({
-    error: 'Not found',
-    available_endpoints: ['/health', '/api/system', '/api/cpu', '/api/memory', '/api/disk', '/api/network', '/api/processes', '/api/dashboard']
+    error: 'Endpoint not found',
+    available: [
+      '/health',
+      '/api/dashboard',
+      '/api/system',
+      '/api/cpu',
+      '/api/memory',
+      '/api/disk',
+      '/api/network',
+      '/api/processes'
+    ]
   });
 });
 
-// Helpers
-function formatUptime(seconds) {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${d}d ${h}h ${m}m`;
-}
-
+// ── Start ──────────────────────────────────────────────────────────────
 app.listen(PORT, '127.0.0.1', () => {
-  console.log(`[${new Date().toISOString()}] sysmon listening on 127.0.0.1:${PORT}`);
-  // Write startup to log file for CloudWatch
-  const fs = require('fs');
-  fs.appendFileSync('/var/log/app.log', `[${new Date().toISOString()}] App started on port ${PORT}\n`);
+  log(`sysmon listening on 127.0.0.1:${PORT}`);
 });
