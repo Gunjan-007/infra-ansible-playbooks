@@ -149,8 +149,8 @@
     mode: "0644"
 
 # ── Handlers ──────────────────────────────────────────────────────────
-handlers:
-  - name: Restart Nginx
-    systemd:
-      name: nginx
-      state: restarted
+# handlers:
+#   - name: Restart Nginx
+#     systemd:
+#       name: nginx
+#       state: restarted
