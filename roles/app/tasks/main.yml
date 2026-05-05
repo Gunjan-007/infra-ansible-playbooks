@@ -6,7 +6,6 @@
     name:
       - gcc-c++
       - make
-      - curl
     state: present
 
 # ── NVM + Node.js ─────────────────────────────────────────────────────
