@@ -1,75 +1,42 @@
-# Server Lifecycle Management & Automation Platform
+# Terraform + Ansible — AWS Infrastructure Automation
 
-> End-to-End CI/CD Architecture & Operations Guide  
-> **Stack:** Terraform · Ansible · Jenkins · AWS · GitHub · Packer · HashiCorp Vault · AWS Systems Manager
-
----
-
-## Table of Contents
-
-1. [Project Overview](#project-overview)
-2. [Architecture Summary](#architecture-summary)
-3. [Technology Stack](#technology-stack)
-4. [Repository Structure](#repository-structure)
-5. [Prerequisites](#prerequisites)
-6. [Infrastructure Setup (PoC)](#infrastructure-setup-poc)
-7. [Pipelines](#pipelines)
-8. [Deployment Runbook](#deployment-runbook)
-9. [Validation & Testing](#validation--testing)
-10. [Zero-Downtime Updates](#zero-downtime-updates)
-11. [Observability & Monitoring](#observability--monitoring)
-12. [Security & Compliance](#security--compliance)
-13. [Terraform State Management](#terraform-state-management)
-14. [Troubleshooting](#troubleshooting)
-15. [Cleanup](#cleanup)
-16. [Quick Reference](#quick-reference)
-
----
-
-## Project Overview
-
-This platform automates every phase of a server's lifecycle across a multi-OS AWS enterprise estate — from golden image creation and monthly refresh, through deployment and configuration, to resource scaling, OS upgrades, patching, and controlled decommissioning.
-
-The included PoC deploys a Node.js REST API (**SysMon**) that reports live EC2 hardware metrics, provisioned entirely via Terraform + Ansible with no manual configuration.
+> **Complete PoC Guide & Runbook** for provisioning a production-grade AWS infrastructure using Terraform (IaC) and Ansible (configuration management).
 
 | Field | Value |
 |---|---|
 | **Project** | terraform-automation |
 | **Region** | ap-south-1 (Mumbai) |
-| **VPC** | vpc-04acd3dfb6b9ac682 |
 | **Application** | SysMon REST API (Node.js) |
-| **GitHub Repo** | Gunjan-007/infra-ansible-playbooks |
-
-### Platform Objectives
-
-- Eliminate manual, error-prone server build processes through fully automated golden image pipelines
-- Maintain consistent, security-hardened base images updated monthly across Debian/Ubuntu, RHEL/CentOS, and Windows Server
-- Enforce infrastructure-as-code discipline — every configuration lives in version-controlled Git repositories
-- Enable zero-downtime deployments and in-place OS upgrades with automated rollback
-- Provide self-service provisioning with policy guardrails via Jenkins pipeline approvals
-- Deliver full audit trails for compliance (SOC 2, ISO 27001, CIS Benchmarks)
+| **GitHub Repo** | [Gunjan-007/infra-ansible-playbooks](https://github.com/Gunjan-007/infra-ansible-playbooks) |
 
 ---
 
-## Architecture Summary
+## Table of Contents
 
-The platform is organized into six automation domains, each with its own Jenkins pipeline, Terraform module, and Ansible playbook collection.
+1. [Project Overview](#1-project-overview)
+2. [Prerequisites (Manual Steps)](#2-prerequisites-manual-steps)
+3. [Master EC2 Setup](#3-master-ec2-setup)
+4. [Terraform Configuration](#4-terraform-configuration)
+5. [Ansible Configuration](#5-ansible-configuration)
+6. [Deployment Runbook](#6-deployment-runbook)
+7. [Validation & Testing](#7-validation--testing)
+8. [Deploying Updates (Zero Downtime)](#8-deploying-updates-zero-downtime)
+9. [Troubleshooting Guide](#9-troubleshooting-guide)
+10. [Cleanup](#10-cleanup)
+11. [Reference](#11-reference)
 
-| Domain | Primary Tooling | Outcome |
-|---|---|---|
-| 1. Golden Image Factory | Packer + Ansible + EC2 Image Builder | Monthly AMIs per OS type/version |
-| 2. Server Provisioning | Terraform + Ansible + Jenkins | Servers deployed from approved AMIs |
-| 3. Patch Management | AWS SSM + Ansible + Jenkins | Monthly OS/app patches, zero-downtime |
-| 4. OS In-Place Upgrade | Ansible + Jenkins + ASG Rolling | WS2022→WS2025, RHEL 8→RHEL 9 |
-| 5. Resource Scaling | Terraform + AWS APIs + Jenkins | CPU, RAM, EBS expand with no rebuild |
-| 6. Decommissioning | Terraform destroy + Ansible cleanup | Safe removal with backup verification |
+---
 
-### PoC Infrastructure Components
+## 1. Project Overview
+
+This project describes the end-to-end process to provision a production-grade AWS infrastructure using **Terraform** for infrastructure-as-code and **Ansible** for configuration management. The application is a Node.js REST API (**SysMon**) that reports live hardware statistics from EC2 instances.
+
+### 1.1 Architecture Summary
 
 | Component | Description |
 |---|---|
 | **Master EC2** | Control plane — runs Terraform and triggers deployments |
-| **ALB** | Application Load Balancer — routes HTTP traffic to healthy instances |
+| **ALB** | Application Load Balancer — receives HTTP traffic, routes to healthy instances |
 | **ASG** | Auto Scaling Group — min 1, max 3 instances, CPU-based scaling |
 | **Launch Template** | Defines EC2 config; userdata pulls Ansible from GitHub on boot |
 | **S3 Backend** | Stores `terraform.tfstate` with versioning enabled |
@@ -77,7 +44,7 @@ The platform is organized into six automation domains, each with its own Jenkins
 | **CloudWatch** | Log groups for app/nginx/userdata + CPU and ALB alarms |
 | **GitHub** | Single source of truth for all Ansible playbooks |
 
-### Key Design Principles
+### 1.2 Key Design Principles
 
 - **Stateful Backend** — S3 stores state; concurrent runs are blocked by lockfile
 - **Stateless Compute** — instances are cattle, not pets; they self-configure from GitHub at boot
@@ -85,186 +52,159 @@ The platform is organized into six automation domains, each with its own Jenkins
 - **Zero-downtime updates** — rolling instance refresh via ASG replaces instances without downtime
 - **No local tooling** — Terraform and Ansible run entirely from the Master EC2
 
----
+### 1.3 Infrastructure Values
 
-## Technology Stack
-
-| Tool | Version | Role |
-|---|---|---|
-| HashiCorp Terraform | ≥ 1.7 | Infrastructure provisioning — EC2, VPC, ALB, ASG, IAM, S3 backend |
-| HashiCorp Packer | ≥ 1.10 | Golden AMI construction |
-| Red Hat Ansible | ≥ 2.16 | Configuration management — hardening, patching, upgrade orchestration |
-| Ansible AWX / AAP | Latest stable | Enterprise Ansible control plane with RBAC and audit logging |
-| Jenkins | LTS + Pipeline | CI/CD orchestration — integrates GitHub, Terraform, Ansible, AWS CLI |
-| GitHub / GitHub Actions | Cloud or GHES | Source of truth for all IaC, playbooks, and Packer templates |
-| AWS SSM | Managed service | Patch Manager, Run Command, Session Manager, Parameter Store |
-| AWS S3 + DynamoDB | Managed service | Terraform remote state backend with state locking |
-| AWS CloudWatch | Managed service | Metrics, logs, and alarms for pipelines and managed servers |
-| HashiCorp Vault | ≥ 1.16 | Secrets management — SSH keys, passwords, API tokens |
-| InSpec / Lynis | Latest | Post-build CIS benchmark compliance scanning |
-
----
-
-## Repository Structure
-
-All infrastructure code lives in the `corp-infra` GitHub Organization with branch protection on `main` (1+ reviewer required, CI checks must pass, no force pushes).
-
-```
-corp-infra/
-├── server-templates/          # Packer HCL templates per OS family
-│   ├── debian-12/
-│   ├── rhel-9/
-│   ├── windows-2022/
-│   └── windows-2025/
-├── ansible-playbooks/         # All Ansible roles and playbooks
-│   ├── roles/
-│   ├── playbooks/             # bootstrap, patch, upgrade, decommission
-│   └── inventory/
-├── terraform-modules/         # Reusable modules: ec2-instance, asg, alb, iam-role, ebs-volume
-├── terraform-environments/    # Environment root configs: prod, staging, dev
-├── jenkins-pipelines/         # Declarative Jenkinsfiles per domain
-├── compliance-policies/       # Sentinel/OPA policies, InSpec profiles, CIS configs
-└── runbooks/                  # Markdown operational runbooks + ADRs (GitHub Pages)
-```
-
-### PoC Terraform Directory
-
-```
-~/infra/terraform/
-├── backend.tf
-├── main.tf
-├── variables.tf
-├── terraform.tfvars
-├── security_groups.tf
-├── iam.tf
-├── alb.tf
-├── asg.tf
-├── cloudwatch.tf
-├── outputs.tf
-└── templates/
-    └── userdata.sh.tpl
-```
-
-### Ansible Playbooks Structure
-
-```
-infra-ansible-playbooks/
-├── site.yml
-├── inventory/
-│   └── hosts
-└── roles/
-    └── app/
-        ├── tasks/main.yml
-        ├── handlers/main.yml       # handlers MUST be here, not in tasks/
-        ├── templates/
-        │   ├── nginx.conf.j2
-        │   └── app.service.j2
-        └── files/
-            └── app.js
-```
-
-### Branch Strategy
-
-| Branch | Purpose |
+| Variable | Value |
 |---|---|
-| `main` | Production-ready code only. Protected. All merges via PR. |
-| `develop` | Integration branch. CI runs on every push. |
-| `feature/<ticket-id>-description` | Short-lived branches per change |
-| `release/<version>` | Release candidate branch |
-| `hotfix/<ticket-id>` | Emergency patches — merge to both `main` and `develop` |
+| **aws_region** | ap-south-1 |
+| **project_name** | terraform-automation |
+| **vpc_id** | vpc-04acd3dfb6b9ac682 |
+| **subnet_ids** | subnet-07ed60fc2eca712d7, subnet-0953ac8d89bb32b48, subnet-0b62a87e09ba3afe6 |
+| **ami_id** | ami-0e12ffc2dd465f6e4 (Amazon Linux 2023) |
+| **instance_type** | t3.micro |
+| **key_name** | infra-key |
+| **github_repo_url** | https://github.com/Gunjan-007/infra-ansible-playbooks.git |
+| **min_size / max_size** | 1 / 3 |
 
 ---
 
-## Prerequisites
+## 2. Prerequisites (Manual Steps)
 
-The following must be completed manually before running any Terraform commands.
+These steps must be completed manually in the AWS Console before running any Terraform commands. They either require human decisions or produce credentials needed by subsequent steps.
 
-### 1. IAM User for Terraform
+### 2.1 IAM User for Terraform
 
-```
-IAM → Users → Create user → Name: terraform-admin
-Attach policy: AdministratorAccess (PoC only — scope down in production)
-Security credentials → Create access key → CLI → Save Access Key ID and Secret
-```
+1. Go to **IAM → Users → Create user** → Name: `terraform-admin`
+2. Attach policy: `AdministratorAccess` *(PoC only — scope down in production)*
+3. **Security credentials → Create access key → CLI** → Save Access Key ID and Secret
 
 > ⚠️ Store the access key securely. It is shown only once.
 
-### 2. EC2 Key Pair
+### 2.2 EC2 Key Pair
 
-```
-EC2 → Key Pairs → Create key pair → Name: infra-key → Type: RSA → Format: .pem
-```
+1. **EC2 → Key Pairs → Create key pair** → Name: `infra-key`
+2. Type: RSA, Format: `.pem` → Download and save locally
+3. Set permissions:
 
 ```bash
 chmod 400 infra-key.pem
 ```
 
-### 3. S3 Bucket for Terraform State
+### 2.3 S3 Bucket for Terraform State
 
-```
-S3 → Create bucket → Name: <your-unique-name>-terraform-state
-Region: ap-south-1 | Block all public access: ON | Versioning: Enable
-```
+1. **S3 → Create bucket** → Name: `<your-unique-name>-terraform-state`
+2. Region: `ap-south-1`
+3. Block all public access: **ON**
+4. Versioning: **Enable**
 
 > ⚠️ The bucket name must be globally unique. Use your name or account ID as a prefix.
 
-### 4. GitHub Repository
+### 2.4 GitHub Repository
 
-Create a public repository `infra-ansible-playbooks` and push all Ansible files (see [Ansible Configuration](#ansible-playbooks-structure)).
+1. Create a new **public** repository: `infra-ansible-playbooks`
+2. URL: `https://github.com/Gunjan-007/infra-ansible-playbooks.git`
+3. Push all Ansible files (see [Section 5](#5-ansible-configuration))
+
+> ✅ Keep the repo public so EC2 instances can clone it without authentication tokens.
 
 ---
 
-## Infrastructure Setup (PoC)
+## 3. Master EC2 Setup
 
-### Launch Master EC2
+The Master EC2 is your control plane. All Terraform commands and instance refreshes are triggered from here. It never runs the application itself.
+
+### 3.1 Launch the Master Instance
 
 | Setting | Value |
 |---|---|
-| Name | terraform-master |
-| AMI | Amazon Linux 2023 |
-| Instance type | t3.micro |
-| Key pair | infra-key |
-| Auto-assign Public IP | Enable |
-| Security group inbound | SSH port 22 from My IP only |
+| **Name** | terraform-master |
+| **AMI** | Amazon Linux 2023 |
+| **Instance type** | t3.micro (free tier eligible) |
+| **Key pair** | infra-key |
+| **VPC / Subnet** | Default VPC, any public subnet |
+| **Auto-assign Public IP** | Enable |
+| **Security group inbound** | SSH port 22 from My IP only |
+| **Storage** | 8 GB gp3 (default) |
 
-Attach IAM role `terraform-master-role` (AdministratorAccess) to the instance after launch.
+### 3.2 Attach IAM Role
 
-### Install Tools on Master
+1. **IAM → Roles → Create role → AWS service → EC2**
+2. Attach: `AdministratorAccess` → Name: `terraform-master-role` → Create
+3. **EC2 → Instances → terraform-master → Actions → Security → Modify IAM role**
+4. Select `terraform-master-role` → Update
+
+### 3.3 Install Tools on Master
+
+SSH into the master:
 
 ```bash
 ssh -i infra-key.pem ec2-user@<MASTER_PUBLIC_IP>
+```
 
-# Terraform
+Then run the bootstrap script:
+
+```bash
+# Install Terraform
 sudo yum install -y yum-utils
 sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
 sudo yum install -y terraform
+terraform version
 
-# Ansible
+# Install Ansible
 pip3 install ansible --user
-echo 'export PATH=$PATH:~/.local/bin' >> ~/.bashrc && source ~/.bashrc
+echo 'export PATH=$PATH:~/.local/bin' >> ~/.bashrc
+source ~/.bashrc
+ansible --version
 
-# Git
+# Install Git
 sudo yum install -y git
 
-# Verify AWS access
+# Verify AWS access via IAM Role
 aws sts get-caller-identity
 ```
 
-### Terraform Infrastructure Values
+---
 
-| Variable | Value |
+## 4. Terraform Configuration
+
+### 4.1 Directory Structure
+
+```
+~/infra/
+└── terraform/
+    ├── backend.tf
+    ├── main.tf
+    ├── variables.tf
+    ├── terraform.tfvars
+    ├── security_groups.tf
+    ├── iam.tf
+    ├── alb.tf
+    ├── asg.tf
+    ├── cloudwatch.tf
+    ├── outputs.tf
+    └── templates/
+        └── userdata.sh.tpl
+```
+
+### 4.2 File Descriptions
+
+| File | Purpose |
 |---|---|
-| `aws_region` | ap-south-1 |
-| `project_name` | terraform-automation |
-| `vpc_id` | vpc-04acd3dfb6b9ac682 |
-| `ami_id` | ami-0e12ffc2dd465f6e4 (Amazon Linux 2023) |
-| `instance_type` | t3.micro |
-| `key_name` | infra-key |
-| `min_size / max_size` | 1 / 3 |
+| **backend.tf** | S3 backend config + provider version (`~> 6.0`). Uses `use_lockfile=true` instead of deprecated `dynamodb_table`. |
+| **variables.tf** | Declares all input variables with types and defaults |
+| **terraform.tfvars** | Actual values — VPC, subnets, AMI, GitHub URL etc. |
+| **main.tf** | VPC data source + SSM parameter for GitHub URL |
+| **security_groups.tf** | ALB SG (HTTP from internet) and App SG (HTTP from ALB only, SSH) |
+| **iam.tf** | EC2 instance role with `CloudWatchAgentServerPolicy` and `SSMReadOnlyAccess` |
+| **alb.tf** | ALB, target group (health check `/health`), HTTP listener |
+| **asg.tf** | Launch template, ASG, scale-out/in policies, CPU alarms |
+| **cloudwatch.tf** | Log groups for app/nginx/userdata + ALB 5xx and unhealthy host alarms |
+| **outputs.tf** | Prints ALB DNS, ASG name, log group names after apply |
+| **userdata.sh.tpl** | Boot script — installs Ansible, clones GitHub, runs playbook, starts CW agent |
 
-### Important: backend.tf (Terraform 6.x)
+### 4.3 Important Notes on `backend.tf`
 
-Terraform AWS provider 6.x deprecates `dynamodb_table`. Use `use_lockfile` instead:
+Terraform AWS provider 6.x deprecates the `dynamodb_table` parameter for state locking. Use the following instead:
 
 ```hcl
 backend "s3" {
@@ -276,117 +216,184 @@ backend "s3" {
 }
 ```
 
----
+> ⚠️ With `use_lockfile = true`, Terraform writes a `.tflock` file directly to S3. The DynamoDB table is no longer needed.
 
-## Pipelines
+### 4.4 CloudWatch Agent JSON Schema Fix
 
-### Pipeline 1 — Golden Image Factory
+The `metrics` block must be a **top-level key** in the CloudWatch agent config, not nested inside `logs`. Incorrect nesting causes the agent to fail silently and block Ansible from running.
 
-Builds security-hardened AMIs for all supported OS types, refreshed monthly.
+**Correct structure:**
 
-**Supported OS Matrix**
+```json
+{
+  "agent": { ... },
+  "logs": {
+    "logs_collected": { ... }
+  },
+  "metrics": {
+    "metrics_collected": { ... }
+  }
+}
+```
 
-| OS | AMI Naming Convention |
-|---|---|
-| Debian 12 | `corp-debian-12-YYYY.MM.v#` |
-| Ubuntu 22.04 LTS | `corp-ubuntu-2204-YYYY.MM.v#` |
-| Ubuntu 24.04 LTS | `corp-ubuntu-2404-YYYY.MM.v#` |
-| RHEL 8.x | `corp-rhel-8-YYYY.MM.v#` |
-| RHEL 9.x | `corp-rhel-9-YYYY.MM.v#` |
-| Windows Server 2022 | `corp-ws2022-YYYY.MM.v#` |
-| Windows Server 2025 | `corp-ws2025-YYYY.MM.v#` |
-
-**Stages:** Source & Validation → Packer Build → Ansible Hardening → Security Scan (Inspector + InSpec) → Publish & Tag → AMI Catalog Update
-
-**AMI Retention Policy**
-
-| State | Retention |
-|---|---|
-| CURRENT | Retained until next successful build |
-| PREVIOUS | 90 days, then auto-deregistered |
-| DEPRECATED | 30-day warning, then deregistered after all instances migrate |
-| EMERGENCY | 120 days, manual review required |
-
-### Pipeline 2 — Server Provisioning
-
-Deploys servers from approved golden AMIs with full stack automation: network, security groups, IAM, storage, Ansible Day-1 config, and CMDB registration.
-
-**Server Naming Convention:** `<env>-<region>-<os>-<role>-<seq>` (e.g., `prod-use1-rhel9-web-001`)
-
-### Pipeline 3 — Patch Management
-
-Ring-based deployment model: patches applied to lower environments first, validated, then progressively rolled to production.
-
-| Ring | Targets | Schedule | Auto-Approve? |
-|---|---|---|---|
-| Ring 0 | Build/Test servers | Patch Tuesday +1 | Yes |
-| Ring 1 | Dev | +3 days | Yes (24h bake) |
-| Ring 2 | Staging | +7 days | Semi (CAB review) |
-| Ring 3 | Prod non-critical | +10 days | No — explicit approval |
-| Ring 4 | Prod critical/DB | +14 days | No — change window |
-| Emergency | All rings | Within 24-72h of CVE | Security override |
-
-### Pipeline 4 — In-Place OS Version Upgrade
-
-| From | To | Tool | Duration |
-|---|---|---|---|
-| Windows Server 2022 | Windows Server 2025 | Windows Setup /auto upgrade | 2-3 hours |
-| RHEL 8.x | RHEL 9.x | Leapp (ELevate) | 60-90 min |
-| Ubuntu 22.04 LTS | Ubuntu 24.04 LTS | do-release-upgrade | 45-90 min |
-| Debian 11 | Debian 12 | apt dist-upgrade | 30-60 min |
-
-### Pipeline 5 — Resource Scaling
-
-- **Storage expansion** — online, zero-downtime via EBS Modify + OS filesystem resize
-- **CPU/Memory scaling** — instance type change with stop/start cycle and ALB drain
-- **ASG fleets** — blue/green launch template with `start-instance-refresh`
-
-### Pipeline 6 — Server Decommissioning
-
-Multi-stage, approval-gated process: workload migration verification → final EBS snapshot → data sanitization → 72-hour quarantine → Terraform destroy → CMDB/DNS cleanup.
+> ⚠️ Always add `|| true` after the `cloudwatch-agent-ctl` command in userdata so a CW failure never prevents Ansible from running.
 
 ---
 
-## Deployment Runbook
+## 5. Ansible Configuration
+
+### 5.1 Repository Structure
+
+```
+infra-ansible-playbooks/
+├── site.yml
+├── inventory/
+│   └── hosts
+└── roles/
+    └── app/
+        ├── tasks/
+        │   └── main.yml
+        ├── handlers/
+        │   └── main.yml       # handlers MUST be here, not in tasks
+        ├── templates/
+        │   ├── nginx.conf.j2
+        │   └── app.service.j2
+        └── files/
+            └── app.js
+```
+
+### 5.2 Bugs Fixed During PoC
+
+| Bug | Fix Applied |
+|---|---|
+| **handlers block in tasks/main.yml** | Moved to `roles/app/handlers/main.yml` — Ansible requires this separation |
+| **curl conflicts with curl-minimal on AL2023** | Removed `curl` from dnf package list — `curl-minimal` is pre-installed and works fine for NVM |
+| **CloudWatch agent schema error** | Moved `metrics` block to top level in the JSON config (was incorrectly nested inside `logs`) |
+| **CW failure blocking Ansible** | Added `\|\| true` to `cloudwatch-agent-ctl` command so failures are non-fatal |
+
+### 5.3 How Ansible Gets Invoked
+
+On every new EC2 boot, the Launch Template userdata script runs the following sequence:
+
+1. Install `git`, `python3`, `pip3`, `ansible` via dnf/pip
+2. Install and configure the CloudWatch agent
+3. `git clone https://github.com/Gunjan-007/infra-ansible-playbooks.git /tmp/playbooks`
+4. `ansible-playbook -i inventory/hosts site.yml --connection=local`
+5. Ansible installs: Node.js (via NVM), npm dependencies, systemd service, Nginx
+
+> ✅ Because the playbook is pulled from GitHub every boot, pushing a fix to GitHub and triggering an instance refresh automatically deploys the fix to all new instances.
+
+### 5.4 Application — SysMon REST API
+
+The Node.js application (`app.js`) uses the `systeminformation` library to expose live hardware metrics as JSON endpoints:
+
+| Endpoint | Returns |
+|---|---|
+| `GET /health` | Status ok + hostname + uptime — ALB health check target |
+| `GET /api/dashboard` | Combined CPU load, memory %, disk %, network throughput |
+| `GET /api/system` | OS info, CPU specs, memory summary |
+| `GET /api/cpu` | Per-core load percentages, temperature |
+| `GET /api/memory` | RAM and swap breakdown |
+| `GET /api/disk` | All mounted filesystems with used/free/percent |
+| `GET /api/network` | Network interfaces and live Rx/Tx bytes/sec |
+| `GET /api/processes` | Top 10 processes by CPU usage |
+
+---
+
+## 6. Deployment Runbook
+
+### 6.1 Initialize Terraform
 
 ```bash
 cd ~/infra/terraform
 
-# 1. Initialize
+# Connect to S3 backend and download provider plugins
 terraform init
 
-# 2. Validate and plan
+# Expected output:
+# Initializing the backend...
+# Successfully configured the backend "s3"!
+# Terraform has been successfully initialized!
+```
+
+> ⚠️ If init fails with `NoSuchBucket`, verify the bucket name in `backend.tf` matches exactly what you created in `ap-south-1`.
+
+### 6.2 Validate and Plan
+
+```bash
+# Validate HCL syntax
 terraform validate
+# Expected: Success! The configuration is valid.
+
+# Format check
 terraform fmt
+
+# Generate plan
 terraform plan -out=tfplan 2>&1 | tee plan.log
+# Review plan.log — expect ~21 resources to be added
+```
 
-# 3. Apply (~3-4 minutes, ~21 resources)
+### 6.3 Apply
+
+```bash
 terraform apply tfplan
+# Duration: ~3-4 minutes
+# At completion:
+# Apply complete! Resources: 21 added, 0 changed, 0 destroyed.
 
-# 4. Get ALB DNS
+# Save the ALB DNS name from outputs:
 terraform output alb_dns_name
 ```
 
-> ⚠️ Always generate a fresh plan before applying. Never reuse an old `tfplan` file.
+### 6.4 Wait for Instance Bootstrap
 
-After apply, wait approximately **7-10 minutes** for the ASG instance to boot, run Ansible, install Node.js/Nginx, and pass ALB health checks.
+After apply completes, the ASG launches an EC2 instance. The instance must:
+
+| Step | Duration |
+|---|---|
+| Boot and run userdata | ~2 min |
+| Install Ansible and clone GitHub repo | ~2 min |
+| Run the Ansible playbook (Node.js, npm, Nginx) | ~3 min |
+| Pass 2 consecutive ALB health checks on `/health` | ~1 min |
+
+**Total wait: approximately 7–10 minutes after apply.**
+
+### 6.5 Standard Deploy Sequence
+
+Always generate a fresh plan before applying. Never reuse an old `tfplan` file:
+
+```bash
+terraform plan -out=tfplan
+terraform apply tfplan
+```
 
 ---
 
-## Validation & Testing
+## 7. Validation & Testing
+
+### 7.1 Check Target Group Health
 
 ```bash
-# Check target group health
 aws elbv2 describe-target-health \
   --target-group-arn $(terraform output -raw target_group_arn) \
-  --region ap-south-1
+  --region ap-south-1 \
+  --query 'TargetHealthDescriptions[*].{ID:Target.Id,State:TargetHealth.State}'
 
-# Run API tests
+# Expected: State = healthy
+```
+
+### 7.2 API Tests
+
+```bash
 ALB=$(terraform output -raw alb_dns_name)
+
+# Health check
 curl -s http://$ALB/health | python3 -m json.tool
+
+# Dashboard — all metrics in one call
 curl -s http://$ALB/api/dashboard | python3 -m json.tool
 
-# Round-robin test (hostname rotates as ASG scales)
+# Round-robin test — hostname rotates as ASG adds instances
 for i in {1..5}; do
   curl -s http://$ALB/health | python3 -c \
     "import sys,json; print(json.load(sys.stdin)['hostname'])"
@@ -394,161 +401,122 @@ for i in {1..5}; do
 done
 ```
 
-### SysMon API Endpoints
-
-| Endpoint | Returns |
-|---|---|
-| `GET /health` | Status, hostname, uptime (ALB health check target) |
-| `GET /api/dashboard` | Combined CPU, memory %, disk %, network throughput |
-| `GET /api/cpu` | Per-core load percentages, temperature |
-| `GET /api/memory` | RAM and swap breakdown |
-| `GET /api/disk` | All mounted filesystems with used/free/percent |
-| `GET /api/network` | Interfaces and live Rx/Tx bytes/sec |
-| `GET /api/processes` | Top 10 processes by CPU usage |
-
-### CloudWatch Log Validation
+### 7.3 CloudWatch Log Validation
 
 | Log Group | What to Look For |
 |---|---|
-| `/aws/ec2/terraform-automation/userdata` | Last line: `Userdata complete` |
+| `/aws/ec2/terraform-automation/userdata` | Last line: `Userdata complete` — confirms Ansible finished |
 | `/aws/ec2/terraform-automation/app` | `sysmon listening on 127.0.0.1:3000` |
-| `/aws/ec2/terraform-automation/nginx` | `GET /health 200` |
+| `/aws/ec2/terraform-automation/nginx` | `GET /health 200` — confirms ALB health checks are passing |
+
+### 7.4 Auto Scaling Test
+
+```bash
+# SSH into an app instance
+ssh -i ~/infra-key.pem ec2-user@<INSTANCE_IP>
+
+# Install and run stress
+sudo dnf install -y stress-ng
+stress-ng --cpu 1 --cpu-load 80 --timeout 180s
+
+# In another terminal — watch the alarm:
+# CloudWatch → Alarms → terraform-automation-cpu-high
+# Fires after 2 minutes → new instance launches
+```
 
 ---
 
-## Zero-Downtime Updates
+## 8. Deploying Updates (Zero Downtime)
 
-Instances are stateless and pull config from GitHub at boot.
+Because instances are stateless and pull their config from GitHub at boot, updating the application is a two-step process:
+
+### 8.1 Push Changes to GitHub
 
 ```bash
-# 1. Push changes to GitHub
-git add . && git commit -m "Update app or playbook" && git push origin main
+git add .
+git commit -m "Update app.js or playbook"
+git push origin main
+```
 
-# 2. Trigger rolling instance refresh
+### 8.2 Trigger Rolling Instance Refresh
+
+```bash
 aws autoscaling start-instance-refresh \
   --auto-scaling-group-name terraform-automation-asg \
   --region ap-south-1 \
   --preferences 'MinHealthyPercentage=50,InstanceWarmup=300'
 
-# 3. Monitor progress
+# Monitor progress
 aws autoscaling describe-instance-refreshes \
   --auto-scaling-group-name terraform-automation-asg \
   --region ap-south-1 \
   --query 'InstanceRefreshes[0].{Status:Status,Percentage:PercentageComplete}'
 ```
 
----
-
-## Observability & Monitoring
-
-### Platform-Level Monitoring
-
-| What to Monitor | Tool | Alert Destination |
-|---|---|---|
-| Jenkins pipeline failures | Jenkins + CloudWatch Logs | SNS → PagerDuty / Email |
-| AMI build failures | CloudWatch Events + Lambda | SNS → Infra Team Slack |
-| Patch compliance drift | SSM Compliance + CloudWatch | Weekly email + Dashboard |
-| AMI age > 45 days | Lambda + DynamoDB catalog | SNS → Admin team warning |
-| Inspector CRITICAL findings | AWS Security Hub | SNS → Security + PagerDuty |
-
-### CloudWatch Alarms
-
-| Alarm | Threshold | Action |
-|---|---|---|
-| CPU High | ≥ 70% for 2 min | Scale out |
-| CPU Low | ≤ 30% for 5 min | Scale in |
-| CPU WARNING | > 85% for 10 min | Alert |
-| CPU CRITICAL | > 95% for 5 min | PagerDuty |
-| Disk WARNING | > 80% | Alert |
-| Disk CRITICAL | > 90% | PagerDuty |
-| StatusCheckFailed | Any | PagerDuty |
+New instances launch, pull the latest playbook from GitHub, pass the health check, then old instances are terminated. The ALB routes traffic only to healthy instances throughout.
 
 ---
 
-## Security & Compliance
-
-### IAM Role Architecture (Least Privilege)
-
-| IAM Role | Assumed By | Permissions Summary |
-|---|---|---|
-| `JenkinsBuildRole` | Jenkins EC2 | EC2:Describe*, SSM:*, S3 (state bucket), STS:AssumeRole |
-| `TerraformDeployRole` | Jenkins (assumed) | EC2:*, IAM:PassRole (limited), Route53:*, S3/DynamoDB (state) |
-| `PackerBuildRole` | Packer EC2 builder | EC2:CreateImage, EC2:Describe*, SSM:* |
-| `EC2InstanceProfile` | All managed EC2 | SSM:*, CloudWatch:PutMetricData/PutLogEvents |
-| `AnsibleAWXRole` | Ansible AWX EC2 | EC2:Describe* (dynamic inventory), SSM:SendCommand |
-
-### Network Security Controls
-
-| Control | Mechanism |
-|---|---|
-| No direct SSH/RDP | SSM Session Manager only — ports 22/3389 never open |
-| IMDSv2 required | Enforced in Terraform launch template + SCP |
-| EBS encryption | All volumes encrypted with KMS CMK per environment |
-| VPC flow logs | Enabled on all VPCs, shipped to S3 + Athena |
-| GuardDuty | Threat detection across all accounts via AWS Organizations |
-
-### Compliance Coverage
-
-| Area | Mechanism | Evidence |
-|---|---|---|
-| CIS Benchmarks | InSpec on every AMI build + weekly on running servers | S3 scan reports |
-| Change Management | JIRA ticket required for every change; Terraform plan diffs attached | JIRA + Jenkins logs |
-| Patch Compliance | SSM Patch Manager + monthly ring-based reports | SSM Console + S3 |
-| Access Logging | CloudTrail, VPC Flow Logs, SSM Session logs, Vault audit logs | S3 (7-year retention) |
-| Secrets Rotation | Vault dynamic secrets with short TTLs; STS 1-hour expiry | Vault audit log |
-
----
-
-## Terraform State Management
-
-- **S3 Bucket:** `corp-terraform-state-<account-id>` — versioning enabled, KMS encryption, MFA Delete
-- **State locking:** `use_lockfile = true` in `backend.tf` (Terraform 6.x) — no DynamoDB table needed
-- **State organization:** separate state file paths per environment (not workspaces)
-- **Drift detection:** weekly Jenkins job runs `terraform plan` across all environments; non-empty plans trigger SNS alert
-
-> ⚠️ Never commit state files to Git. `.gitignore` enforces this in all Terraform repos.
-
----
-
-## Troubleshooting
+## 9. Troubleshooting Guide
 
 | Symptom | Steps to Diagnose and Fix |
 |---|---|
-| **502 Bad Gateway from ALB** | Check target group health → SSH in → `sudo tail -100 /var/log/userdata.log` → `sudo systemctl status sysmon` |
-| **Target shows unhealthy** | Wait 5 more minutes (Ansible may still be running). If still failing, check `/var/log/ansible-run.log` |
-| **Stale plan error on apply** | Always re-run `terraform plan -out=tfplan` before `terraform apply`. Never reuse old plan files. |
-| **`dynamodb_table` warning** | Replace `dynamodb_table` in `backend.tf` with `use_lockfile = true` |
-| **curl conflicts on AL2023** | Remove `curl` from dnf package list — `curl-minimal` is pre-installed and works for NVM |
-| **Handlers in wrong file** | Ansible handlers must be in `roles/app/handlers/main.yml`, not at the bottom of `tasks/main.yml` |
-| **CloudWatch agent schema error** | `metrics` block must be top-level in the JSON config, not nested inside `logs` |
-| **sysmon service not found** | Ansible didn't run — check `/var/log/userdata.log` for the stopping error |
+| **502 Bad Gateway from ALB** | 1. Check target group health (Section 7.1) 2. SSH into instance 3. Check `sudo tail -100 /var/log/userdata.log` 4. Check `sudo systemctl status sysmon` 5. Check `curl http://localhost/health` |
+| **Target shows unhealthy** | Ansible may not have finished. Wait 5 more minutes then re-check. If still failing: SSH in and check `/var/log/ansible-run.log` |
+| **Stale plan error on apply** | Always re-run `terraform plan -out=tfplan` before `terraform apply`. Never reuse an old plan file. |
+| **dynamodb_table warning** | Replace `dynamodb_table` line in `backend.tf` with `use_lockfile = true` |
+| **curl conflicts on AL2023** | Remove `curl` from dnf package list. `curl-minimal` is pre-installed and works for NVM. |
+| **handlers in wrong file** | Ansible handlers must be in `roles/app/handlers/main.yml` not at the bottom of `tasks/main.yml` |
+| **CloudWatch agent schema error** | `metrics` block must be top-level in the JSON, not nested inside `logs` |
+| **sysmon service not found** | Ansible didn't run. Check `/var/log/userdata.log` for the error that stopped execution. |
 | **Instance refresh stuck** | If existing instance is unhealthy, use `MinHealthyPercentage=0` to force replacement |
-| **Terraform state lock stuck** | Check DynamoDB lock table → verify no active apply → run `terraform force-unlock <lock-id>` |
-| **Server won't boot post-upgrade** | Stop instance → detach volumes → restore from pre-upgrade EBS snapshots → reattach → start |
 
 ---
 
-## Cleanup
+## 10. Cleanup
+
+### 10.1 Terraform Destroy
 
 ```bash
-# 1. Destroy all Terraform-managed resources
 cd ~/infra/terraform
 terraform destroy
-
-# 2. Manual cleanup in AWS Console (run AFTER terraform destroy)
-# - S3: empty and delete state bucket
-# - EC2: terminate terraform-master instance
-# - EC2: delete infra-key key pair
-# - IAM: delete terraform-admin user
+# Type 'yes' when prompted
+# Destroys: ASG, EC2 instances, ALB, TG, SGs, IAM role, CW log groups, SSM param
 ```
 
-> ⚠️ Always run `terraform destroy` **before** deleting the S3 bucket. Deleting the bucket first removes the state file and Terraform loses track of all resources.
+### 10.2 Manual Cleanup (Console)
+
+1. **S3** → your-bucket → Empty all objects → Delete bucket
+2. **DynamoDB** → `terraform-state-lock` → Delete table *(if created)*
+3. **EC2 → Instances** → `terraform-master` → Terminate
+4. **EC2 → Key Pairs** → `infra-key` → Delete
+5. **IAM → Users** → `terraform-admin` → Delete
+
+> ⚠️ Always run `terraform destroy` **BEFORE** deleting the S3 bucket, otherwise the state file is gone and Terraform cannot track what to clean up.
 
 ---
 
-## Quick Reference
+## 11. Reference
 
-### Useful Commands
+### 11.1 Key AWS Resources Created
+
+| Resource | Name / ARN Pattern |
+|---|---|
+| **ALB** | terraform-automation-alb |
+| **Target Group** | terraform-automation-tg (health check: `GET /health` every 30s) |
+| **ASG** | terraform-automation-asg |
+| **Launch Template** | terraform-automation-lt-* |
+| **App Security Group** | terraform-automation-app-sg |
+| **ALB Security Group** | terraform-automation-alb-sg |
+| **IAM Role** | terraform-automation-app-instance-role |
+| **CW Log Group (App)** | /aws/ec2/terraform-automation/app |
+| **CW Log Group (Nginx)** | /aws/ec2/terraform-automation/nginx |
+| **CW Log Group (Userdata)** | /aws/ec2/terraform-automation/userdata |
+| **CW Alarm (scale out)** | terraform-automation-cpu-high (>= 70% for 2 min) |
+| **CW Alarm (scale in)** | terraform-automation-cpu-low (<= 30% for 5 min) |
+| **SSM Parameter** | /terraform-automation/github_repo_url |
+
+### 11.2 Useful Commands Quick Reference
 
 ```bash
 # Get ALB URL
@@ -579,36 +547,6 @@ aws autoscaling describe-instance-refreshes \
   --query 'InstanceRefreshes[0].{Status:Status,Percentage:PercentageComplete}'
 ```
 
-### Key AWS Resources Created
-
-| Resource | Name |
-|---|---|
-| ALB | `terraform-automation-alb` |
-| Target Group | `terraform-automation-tg` (health: `GET /health` every 30s) |
-| ASG | `terraform-automation-asg` |
-| Launch Template | `terraform-automation-lt-*` |
-| App SG | `terraform-automation-app-sg` |
-| ALB SG | `terraform-automation-alb-sg` |
-| IAM Role | `terraform-automation-app-instance-role` |
-| CW Log (App) | `/aws/ec2/terraform-automation/app` |
-| CW Log (Nginx) | `/aws/ec2/terraform-automation/nginx` |
-| CW Log (Userdata) | `/aws/ec2/terraform-automation/userdata` |
-| CW Alarm (scale out) | `terraform-automation-cpu-high` (≥70% for 2 min) |
-| CW Alarm (scale in) | `terraform-automation-cpu-low` (≤30% for 5 min) |
-| SSM Parameter | `/terraform-automation/github_repo_url` |
-
-### Architecture Decision Records
-
-| ADR | Decision |
-|---|---|
-| ADR-001 | All servers must be deployed from approved AMIs — no manual OS installation |
-| ADR-002 | No long-lived SSH keys. All access via SSM Session Manager |
-| ADR-003 | Terraform remote state in S3 with locking. Never use local state in pipelines |
-| ADR-004 | Every production change requires a JIRA ticket and at least one approver who did not initiate it |
-| ADR-005 | Packer AMI builds run in an isolated VPC with no internet egress — all packages via VPC endpoints |
-| ADR-006 | AMIs older than 90 days in PREVIOUS state are deregistered automatically |
-| ADR-007 | All EBS volumes encrypted with AWS KMS Customer Managed Keys at all times |
-
 ---
 
-*Server Lifecycle Management & Automation Platform · Terraform · Ansible · AWS · Last Updated: May 2026*
+*Terraform + Ansible AWS PoC — Gunjan-007*
